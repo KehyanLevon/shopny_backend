@@ -6,6 +6,7 @@ use App\Entity\Category;
 use App\Repository\CategoryRepository;
 use App\Repository\SectionRepository;
 use Doctrine\ORM\EntityManagerInterface;
+use OpenApi\Attributes as OA;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -14,9 +15,45 @@ use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Component\String\Slugger\SluggerInterface;
 
 #[Route('/api/categories', name: 'api_categories_')]
+#[OA\Tag(name: 'Category')]
 class CategoryController extends AbstractController
 {
     #[Route('', name: 'index', methods: ['GET'])]
+    #[OA\Get(
+        description: 'Returns list of categories. Public endpoint (no auth required).',
+        summary: 'List categories',
+        parameters: [
+            new OA\QueryParameter(
+                name: 'sectionId',
+                description: 'Filter by section ID',
+                required: false,
+                schema: new OA\Schema(type: 'integer')
+            )
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: 'List of categories',
+                content: new OA\JsonContent(
+                    type: 'array',
+                    items: new OA\Items(
+                        properties: [
+                            new OA\Property(property: 'id', type: 'integer'),
+                            new OA\Property(property: 'title', type: 'string'),
+                            new OA\Property(property: 'slug', type: 'string'),
+                            new OA\Property(property: 'description', type: 'string', nullable: true),
+                            new OA\Property(property: 'isActive', type: 'boolean'),
+                            new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                            new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                            new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                            new OA\Property(property: 'productsCount', type: 'integer'),
+                        ],
+                        type: 'object'
+                    )
+                )
+            )
+        ]
+    )]
     public function index(
         CategoryRepository $categoryRepository,
         Request $request,
@@ -42,6 +79,42 @@ class CategoryController extends AbstractController
     }
 
     #[Route('/{id}', name: 'show', methods: ['GET'])]
+    #[OA\Get(
+        description: 'Returns single category by ID. Public endpoint (no auth required).',
+        summary: 'Get category by ID',
+        parameters: [
+            new OA\PathParameter(
+                name: 'id',
+                description: 'Category ID',
+                required: true,
+                schema: new OA\Schema(type: 'integer')
+            )
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: 'Category found',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'id', type: 'integer'),
+                        new OA\Property(property: 'title', type: 'string'),
+                        new OA\Property(property: 'slug', type: 'string'),
+                        new OA\Property(property: 'description', type: 'string', nullable: true),
+                        new OA\Property(property: 'isActive', type: 'boolean'),
+                        new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'productsCount', type: 'integer'),
+                    ],
+                    type: 'object'
+                )
+            ),
+            new OA\Response(
+                response: 404,
+                description: 'Category not found'
+            )
+        ]
+    )]
     public function show(Category $category): JsonResponse
     {
         return $this->json($this->serializeCategory($category));
@@ -49,6 +122,59 @@ class CategoryController extends AbstractController
 
     #[Route('', name: 'create', methods: ['POST'])]
     #[IsGranted('ROLE_ADMIN')]
+    #[OA\Post(
+        description: 'Admin only. Creates a new category.',
+        summary: 'Create a new category',
+        requestBody: new OA\RequestBody(
+            required: true,
+            content: new OA\JsonContent(
+                required: ['title', 'sectionId'],
+                properties: [
+                    new OA\Property(property: 'title', type: 'string'),
+                    new OA\Property(property: 'sectionId', type: 'integer'),
+                    new OA\Property(property: 'description', type: 'string', nullable: true),
+                ]
+            )
+        ),
+        responses: [
+            new OA\Response(
+                response: 201,
+                description: 'Category created',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'id', type: 'integer'),
+                        new OA\Property(property: 'title', type: 'string'),
+                        new OA\Property(property: 'slug', type: 'string'),
+                        new OA\Property(property: 'description', type: 'string', nullable: true),
+                        new OA\Property(property: 'isActive', type: 'boolean'),
+                        new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'productsCount', type: 'integer'),
+                    ],
+                    type: 'object'
+                )
+            ),
+            new OA\Response(
+                response: 400,
+                description: 'Invalid JSON or missing required fields',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+            new OA\Response(
+                response: 404,
+                description: 'Section not found',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+        ]
+    )]
     public function create(
         Request $request,
         EntityManagerInterface $em,
@@ -91,6 +217,66 @@ class CategoryController extends AbstractController
 
     #[Route('/{id}', name: 'update', methods: ['PUT', 'PATCH'])]
     #[IsGranted('ROLE_ADMIN')]
+    #[OA\Patch(
+        description: 'Admin only. Partially update category by ID.',
+        summary: 'Update category',
+        requestBody: new OA\RequestBody(
+            required: false,
+            content: new OA\JsonContent(
+                properties: [
+                    new OA\Property(property: 'title', type: 'string', nullable: true),
+                    new OA\Property(property: 'description', type: 'string', nullable: true),
+                    new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                ]
+            )
+        ),
+        parameters: [
+            new OA\PathParameter(
+                name: 'id',
+                description: 'Category ID',
+                required: true,
+                schema: new OA\Schema(type: 'integer')
+            )
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: 'Category updated',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'id', type: 'integer'),
+                        new OA\Property(property: 'title', type: 'string'),
+                        new OA\Property(property: 'slug', type: 'string'),
+                        new OA\Property(property: 'description', type: 'string', nullable: true),
+                        new OA\Property(property: 'isActive', type: 'boolean'),
+                        new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'productsCount', type: 'integer'),
+                    ],
+                    type: 'object'
+                )
+            ),
+            new OA\Response(
+                response: 400,
+                description: 'Invalid JSON',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+            new OA\Response(
+                response: 404,
+                description: 'Section not found (если передали несуществующий sectionId)',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+        ]
+    )]
     public function update(
         Category $category,
         Request $request,
@@ -137,6 +323,24 @@ class CategoryController extends AbstractController
 
     #[Route('/{id}', name: 'delete', methods: ['DELETE'])]
     #[IsGranted('ROLE_ADMIN')]
+    #[OA\Delete(
+        description: 'Admin only. Deletes category by ID.',
+        summary: 'Delete category',
+        parameters: [
+            new OA\PathParameter(
+                name: 'id',
+                description: 'Category ID',
+                required: true,
+                schema: new OA\Schema(type: 'integer')
+            )
+        ],
+        responses: [
+            new OA\Response(
+                response: 204,
+                description: 'Category deleted (no content)'
+            )
+        ]
+    )]
     public function delete(
         Category $category,
         EntityManagerInterface $em,
