@@ -7,6 +7,7 @@ use App\Enum\ProductStatus;
 use App\Repository\CategoryRepository;
 use App\Repository\ProductRepository;
 use Doctrine\ORM\EntityManagerInterface;
+use OpenApi\Attributes as OA;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -15,9 +16,62 @@ use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Component\String\Slugger\SluggerInterface;
 
 #[Route('/api/products', name: 'api_products_')]
+#[OA\Tag(name: 'Product')]
 class ProductController extends AbstractController
 {
     #[Route('', name: 'index', methods: ['GET'])]
+    #[OA\Get(
+        description: 'Returns list of products. Public endpoint (no auth required).',
+        summary: 'List products',
+        parameters: [
+            new OA\QueryParameter(
+                name: 'categoryId',
+                description: 'Filter by category ID',
+                required: false,
+                schema: new OA\Schema(type: 'integer')
+            ),
+            new OA\QueryParameter(
+                name: 'sectionId',
+                description: 'Filter by section ID',
+                required: false,
+                schema: new OA\Schema(type: 'integer')
+            ),
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: 'List of products',
+                content: new OA\JsonContent(
+                    type: 'array',
+                    items: new OA\Items(
+                        properties: [
+                            new OA\Property(property: 'id', type: 'integer'),
+                            new OA\Property(property: 'title', type: 'string'),
+                            new OA\Property(property: 'slug', type: 'string'),
+                            new OA\Property(property: 'description', type: 'string', nullable: true),
+                            new OA\Property(property: 'price', type: 'string', example: '199.99'),
+                            new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
+                            new OA\Property(property: 'status', type: 'string', example: 'ACTIVE'),
+                            new OA\Property(property: 'isActive', type: 'boolean'),
+                            new OA\Property(
+                                property: 'images',
+                                type: 'array',
+                                items: new OA\Items(type: 'string'),
+                                nullable: true
+                            ),
+                            new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
+                            new OA\Property(property: 'categoryTitle', type: 'string', nullable: true),
+                            new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                            new OA\Property(property: 'sectionTitle', type: 'string', nullable: true),
+                            new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                            new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                        ],
+                        type: 'object'
+                    )
+                )
+            )
+        ]
+    )]
     public function index(
         ProductRepository $repo,
         Request $request
@@ -47,6 +101,53 @@ class ProductController extends AbstractController
     }
 
     #[Route('/{id}', name: 'show', methods: ['GET'])]
+    #[OA\Get(
+        description: 'Returns single product by ID. Public endpoint (no auth required).',
+        summary: 'Get product by ID',
+        parameters: [
+            new OA\PathParameter(
+                name: 'id',
+                description: 'Product ID',
+                required: true,
+                schema: new OA\Schema(type: 'integer')
+            )
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: 'Product found',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'id', type: 'integer'),
+                        new OA\Property(property: 'title', type: 'string'),
+                        new OA\Property(property: 'slug', type: 'string'),
+                        new OA\Property(property: 'description', type: 'string', nullable: true),
+                        new OA\Property(property: 'price', type: 'string', example: '199.99'),
+                        new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
+                        new OA\Property(property: 'status', type: 'string', example: 'ACTIVE'),
+                        new OA\Property(property: 'isActive', type: 'boolean'),
+                        new OA\Property(
+                            property: 'images',
+                            type: 'array',
+                            items: new OA\Items(type: 'string'),
+                            nullable: true
+                        ),
+                        new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'categoryTitle', type: 'string', nullable: true),
+                        new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'sectionTitle', type: 'string', nullable: true),
+                        new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                    ],
+                    type: 'object'
+                )
+            ),
+            new OA\Response(
+                response: 404,
+                description: 'Product not found'
+            )
+        ]
+    )]
     public function show(Product $product): JsonResponse
     {
         return $this->json($this->serializeProduct($product));
@@ -54,6 +155,84 @@ class ProductController extends AbstractController
 
     #[Route('', name: 'create', methods: ['POST'])]
     #[IsGranted('ROLE_ADMIN')]
+    #[OA\Post(
+        description: 'Admin only. Creates a new product.',
+        summary: 'Create a new product',
+        requestBody: new OA\RequestBody(
+            required: true,
+            content: new OA\JsonContent(
+                required: ['title', 'price', 'categoryId'],
+                properties: [
+                    new OA\Property(property: 'title', type: 'string'),
+                    new OA\Property(property: 'price', type: 'string', example: '199.99'),
+                    new OA\Property(property: 'categoryId', type: 'integer'),
+                    new OA\Property(property: 'description', type: 'string', nullable: true),
+                    new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
+                    new OA\Property(
+                        property: 'status',
+                        description: 'Product status enum (e.g. ACTIVE, DRAFT, ARCHIVED)',
+                        type: 'string',
+                        nullable: true
+                    ),
+                    new OA\Property(
+                        property: 'images',
+                        type: 'array',
+                        items: new OA\Items(type: 'string'),
+                        nullable: true
+                    ),
+                ]
+            )
+        ),
+        responses: [
+            new OA\Response(
+                response: 201,
+                description: 'Product created',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'id', type: 'integer'),
+                        new OA\Property(property: 'title', type: 'string'),
+                        new OA\Property(property: 'slug', type: 'string'),
+                        new OA\Property(property: 'description', type: 'string', nullable: true),
+                        new OA\Property(property: 'price', type: 'string'),
+                        new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
+                        new OA\Property(property: 'status', type: 'string'),
+                        new OA\Property(property: 'isActive', type: 'boolean'),
+                        new OA\Property(
+                            property: 'images',
+                            type: 'array',
+                            items: new OA\Items(type: 'string'),
+                            nullable: true
+                        ),
+                        new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'categoryTitle', type: 'string', nullable: true),
+                        new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'sectionTitle', type: 'string', nullable: true),
+                        new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                    ],
+                    type: 'object'
+                )
+            ),
+            new OA\Response(
+                response: 400,
+                description: 'Invalid JSON or missing required fields',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+            new OA\Response(
+                response: 404,
+                description: 'Category not found',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+        ]
+    )]
     public function create(
         Request $request,
         EntityManagerInterface $em,
@@ -98,6 +277,91 @@ class ProductController extends AbstractController
 
     #[Route('/{id}', name: 'update', methods: ['PUT', 'PATCH'])]
     #[IsGranted('ROLE_ADMIN')]
+    #[OA\Patch(
+        description: 'Admin only. Partially update product fields by ID.',
+        summary: 'Update product',
+        requestBody: new OA\RequestBody(
+            required: false,
+            content: new OA\JsonContent(
+                properties: [
+                    new OA\Property(property: 'title', type: 'string', nullable: true),
+                    new OA\Property(property: 'price', type: 'string', nullable: true),
+                    new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
+                    new OA\Property(property: 'description', type: 'string', nullable: true),
+                    new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
+                    new OA\Property(
+                        property: 'status',
+                        description: 'Product status enum (e.g. ACTIVE, DRAFT, ARCHIVED)',
+                        type: 'string',
+                        nullable: true
+                    ),
+                    new OA\Property(
+                        property: 'images',
+                        type: 'array',
+                        items: new OA\Items(type: 'string'),
+                        nullable: true
+                    ),
+                ]
+            )
+        ),
+        parameters: [
+            new OA\PathParameter(
+                name: 'id',
+                description: 'Product ID',
+                required: true,
+                schema: new OA\Schema(type: 'integer')
+            )
+        ],
+        responses: [
+            new OA\Response(
+                response: 200,
+                description: 'Product updated',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'id', type: 'integer'),
+                        new OA\Property(property: 'title', type: 'string'),
+                        new OA\Property(property: 'slug', type: 'string'),
+                        new OA\Property(property: 'description', type: 'string', nullable: true),
+                        new OA\Property(property: 'price', type: 'string'),
+                        new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
+                        new OA\Property(property: 'status', type: 'string'),
+                        new OA\Property(property: 'isActive', type: 'boolean'),
+                        new OA\Property(
+                            property: 'images',
+                            type: 'array',
+                            items: new OA\Items(type: 'string'),
+                            nullable: true
+                        ),
+                        new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'categoryTitle', type: 'string', nullable: true),
+                        new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                        new OA\Property(property: 'sectionTitle', type: 'string', nullable: true),
+                        new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                        new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                    ],
+                    type: 'object'
+                )
+            ),
+            new OA\Response(
+                response: 400,
+                description: 'Invalid JSON',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+            new OA\Response(
+                response: 404,
+                description: 'Category not found (if categoryId is invalid)',
+                content: new OA\JsonContent(
+                    properties: [
+                        new OA\Property(property: 'error', type: 'string'),
+                    ]
+                )
+            ),
+        ]
+    )]
     public function update(
         Product $product,
         Request $request,
@@ -151,6 +415,24 @@ class ProductController extends AbstractController
 
     #[Route('/{id}', name: 'delete', methods: ['DELETE'])]
     #[IsGranted('ROLE_ADMIN')]
+    #[OA\Delete(
+        description: 'Admin only. Deletes product by ID.',
+        summary: 'Delete product',
+        parameters: [
+            new OA\PathParameter(
+                name: 'id',
+                description: 'Product ID',
+                required: true,
+                schema: new OA\Schema(type: 'integer')
+            )
+        ],
+        responses: [
+            new OA\Response(
+                response: 204,
+                description: 'Product deleted (no content)'
+            )
+        ]
+    )]
     public function delete(
         Product $product,
         EntityManagerInterface $em
