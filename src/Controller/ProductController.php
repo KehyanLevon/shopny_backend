@@ -8,6 +8,8 @@ use App\Repository\CategoryRepository;
 use App\Repository\ProductRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
+use Pagerfanta\Doctrine\ORM\QueryAdapter;
+use Pagerfanta\Pagerfanta;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -21,7 +23,7 @@ class ProductController extends AbstractController
 {
     #[Route('', name: 'index', methods: ['GET'])]
     #[OA\Get(
-        description: 'Returns list of products. Public endpoint (no auth required).',
+        description: 'Returns list of products with pagination, search and sorting. Public endpoint (no auth required).',
         summary: 'List products',
         parameters: [
             new OA\QueryParameter(
@@ -36,38 +38,78 @@ class ProductController extends AbstractController
                 required: false,
                 schema: new OA\Schema(type: 'integer')
             ),
+            new OA\QueryParameter(
+                name: 'page',
+                description: 'Page number (1-based)',
+                required: false,
+                schema: new OA\Schema(type: 'integer', default: 1)
+            ),
+            new OA\QueryParameter(
+                name: 'limit',
+                description: 'Items per page',
+                required: false,
+                schema: new OA\Schema(type: 'integer', default: 20)
+            ),
+            new OA\QueryParameter(
+                name: 'q',
+                description: 'Search query (by title or description)',
+                required: false,
+                schema: new OA\Schema(type: 'string')
+            ),
+            new OA\QueryParameter(
+                name: 'sortBy',
+                description: 'Sort field: price or createdAt',
+                required: false,
+                schema: new OA\Schema(type: 'string', default: 'createdAt')
+            ),
+            new OA\QueryParameter(
+                name: 'sortDir',
+                description: 'Sort direction: asc or desc',
+                required: false,
+                schema: new OA\Schema(type: 'string', default: 'desc')
+            ),
         ],
         responses: [
             new OA\Response(
                 response: 200,
-                description: 'List of products',
+                description: 'Paginated list of products',
                 content: new OA\JsonContent(
-                    type: 'array',
-                    items: new OA\Items(
-                        properties: [
-                            new OA\Property(property: 'id', type: 'integer'),
-                            new OA\Property(property: 'title', type: 'string'),
-                            new OA\Property(property: 'slug', type: 'string'),
-                            new OA\Property(property: 'description', type: 'string', nullable: true),
-                            new OA\Property(property: 'price', type: 'string', example: '199.99'),
-                            new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
-                            new OA\Property(property: 'status', type: 'string', example: 'ACTIVE'),
-                            new OA\Property(property: 'isActive', type: 'boolean'),
-                            new OA\Property(
-                                property: 'images',
-                                type: 'array',
-                                items: new OA\Items(type: 'string'),
-                                nullable: true
-                            ),
-                            new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
-                            new OA\Property(property: 'categoryTitle', type: 'string', nullable: true),
-                            new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
-                            new OA\Property(property: 'sectionTitle', type: 'string', nullable: true),
-                            new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
-                            new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
-                        ],
-                        type: 'object'
-                    )
+                    properties: [
+                        new OA\Property(
+                            property: 'items',
+                            type: 'array',
+                            items: new OA\Items(
+                                properties: [
+                                    new OA\Property(property: 'id', type: 'integer'),
+                                    new OA\Property(property: 'title', type: 'string'),
+                                    new OA\Property(property: 'slug', type: 'string'),
+                                    new OA\Property(property: 'description', type: 'string', nullable: true),
+                                    new OA\Property(property: 'price', type: 'string', example: '199.99'),
+                                    new OA\Property(property: 'discountPrice', type: 'string', nullable: true),
+                                    new OA\Property(property: 'status', type: 'string', example: 'ACTIVE'),
+                                    new OA\Property(property: 'isActive', type: 'boolean'),
+                                    new OA\Property(
+                                        property: 'images',
+                                        type: 'array',
+                                        items: new OA\Items(type: 'string'),
+                                        nullable: true
+                                    ),
+                                    new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
+                                    new OA\Property(property: 'categoryTitle', type: 'string', nullable: true),
+                                    new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                                    new OA\Property(property: 'sectionTitle', type: 'string', nullable: true),
+                                    new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                                    new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                                ],
+                                type: 'object'
+                            )
+                        ),
+                        new OA\Property(property: 'total', type: 'integer'),
+                        new OA\Property(property: 'page', type: 'integer'),
+                        new OA\Property(property: 'limit', type: 'integer'),
+                        new OA\Property(property: 'pages', type: 'integer'),
+                    ],
+                    type: 'object'
                 )
             )
         ]
@@ -76,8 +118,15 @@ class ProductController extends AbstractController
         ProductRepository $repo,
         Request $request
     ): JsonResponse {
+        $page  = max(1, (int) $request->query->get('page', 1));
+        $limit = max(1, min(100, (int) $request->query->get('limit', 20)));
+
         $categoryId = $request->query->get('categoryId');
         $sectionId  = $request->query->get('sectionId');
+        $q          = trim((string) $request->query->get('q', ''));
+
+        $sortBy  = (string) $request->query->get('sortBy', 'createdAt');
+        $sortDir = strtolower((string) $request->query->get('sortDir', 'desc')) === 'asc' ? 'ASC' : 'DESC';
 
         $qb = $repo->createQueryBuilder('p')
             ->leftJoin('p.category', 'c')
@@ -85,19 +134,43 @@ class ProductController extends AbstractController
             ->addSelect('c', 's');
 
         if ($categoryId !== null) {
-            $qb->andWhere('c.id = :categoryId')->setParameter('categoryId', (int)$categoryId);
+            $qb->andWhere('c.id = :categoryId')->setParameter('categoryId', (int) $categoryId);
         }
 
         if ($sectionId !== null) {
-            $qb->andWhere('s.id = :sectionId')->setParameter('sectionId', (int)$sectionId);
+            $qb->andWhere('s.id = :sectionId')->setParameter('sectionId', (int) $sectionId);
         }
 
-        $products = $qb->getQuery()->getResult();
+        if ($q !== '') {
+            $qb
+                ->andWhere('LOWER(p.title) LIKE :q OR LOWER(p.description) LIKE :q')
+                ->setParameter('q', '%' . mb_strtolower($q) . '%');
+        }
 
-        return $this->json(array_map(
+        if (!in_array($sortBy, ['price', 'createdAt', 'title'], true)) {
+            $sortBy = 'createdAt';
+        }
+
+        $qb->orderBy('p.' . $sortBy, $sortDir);
+
+        $qb->distinct();
+
+        $pager = new Pagerfanta(new QueryAdapter($qb));
+        $pager->setMaxPerPage($limit);
+        $pager->setCurrentPage($page);
+
+        $items = array_map(
             fn(Product $p) => $this->serializeProduct($p),
-            $products
-        ));
+            iterator_to_array($pager->getCurrentPageResults())
+        );
+
+        return $this->json([
+            'items' => $items,
+            'total' => $pager->getNbResults(),
+            'page'  => $page,
+            'limit' => $limit,
+            'pages' => $pager->getNbPages(),
+        ]);
     }
 
     #[Route('/{id}', name: 'show', methods: ['GET'])]
@@ -268,6 +341,9 @@ class ProductController extends AbstractController
         if (isset($payload['images'])) {
             $product->setImages($payload['images']);
         }
+        if (isset($payload['isActive'])) {
+            $product->setIsActive((bool) $payload['isActive']);
+        }
 
         $em->persist($product);
         $em->flush();
@@ -386,8 +462,13 @@ class ProductController extends AbstractController
         if (isset($payload['price'])) {
             $product->setPrice($payload['price']);
         }
-        if (isset($payload['discountPrice'])) {
-            $product->setDiscountPrice($payload['discountPrice']);
+        if (array_key_exists('discountPrice', $payload)) {
+            $raw = $payload['discountPrice'];
+            if ($raw === null || $raw === '') {
+                $product->setDiscountPrice(null);
+            } else {
+                $product->setDiscountPrice((string) $raw);
+            }
         }
         if (isset($payload['categoryId'])) {
             $category = $categoryRepo->find((int)$payload['categoryId']);
@@ -405,6 +486,9 @@ class ProductController extends AbstractController
         }
         if ($titleChanged) {
             $product->setSlug((string)$slugger->slug($product->getTitle())->lower());
+        }
+        if (isset($payload['isActive'])) {
+            $product->setIsActive((bool) $payload['isActive']);
         }
 
         $product->setUpdatedAt(new \DateTimeImmutable());

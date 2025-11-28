@@ -7,6 +7,8 @@ use App\Repository\CategoryRepository;
 use App\Repository\SectionRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
+use Pagerfanta\Doctrine\ORM\QueryAdapter;
+use Pagerfanta\Pagerfanta;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -20,7 +22,7 @@ class CategoryController extends AbstractController
 {
     #[Route('', name: 'index', methods: ['GET'])]
     #[OA\Get(
-        description: 'Returns list of categories. Public endpoint (no auth required).',
+        description: 'Returns list of categories with pagination & search. Public endpoint (no auth required).',
         summary: 'List categories',
         parameters: [
             new OA\QueryParameter(
@@ -28,28 +30,56 @@ class CategoryController extends AbstractController
                 description: 'Filter by section ID',
                 required: false,
                 schema: new OA\Schema(type: 'integer')
-            )
+            ),
+            new OA\QueryParameter(
+                name: 'page',
+                description: 'Page number (1-based)',
+                required: false,
+                schema: new OA\Schema(type: 'integer', default: 1)
+            ),
+            new OA\QueryParameter(
+                name: 'limit',
+                description: 'Items per page',
+                required: false,
+                schema: new OA\Schema(type: 'integer', default: 20)
+            ),
+            new OA\QueryParameter(
+                name: 'q',
+                description: 'Search query (by title or slug)',
+                required: false,
+                schema: new OA\Schema(type: 'string')
+            ),
         ],
         responses: [
             new OA\Response(
                 response: 200,
-                description: 'List of categories',
+                description: 'Paginated list of categories',
                 content: new OA\JsonContent(
-                    type: 'array',
-                    items: new OA\Items(
-                        properties: [
-                            new OA\Property(property: 'id', type: 'integer'),
-                            new OA\Property(property: 'title', type: 'string'),
-                            new OA\Property(property: 'slug', type: 'string'),
-                            new OA\Property(property: 'description', type: 'string', nullable: true),
-                            new OA\Property(property: 'isActive', type: 'boolean'),
-                            new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
-                            new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
-                            new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
-                            new OA\Property(property: 'productsCount', type: 'integer'),
-                        ],
-                        type: 'object'
-                    )
+                    properties: [
+                        new OA\Property(
+                            property: 'items',
+                            type: 'array',
+                            items: new OA\Items(
+                                properties: [
+                                    new OA\Property(property: 'id', type: 'integer'),
+                                    new OA\Property(property: 'title', type: 'string'),
+                                    new OA\Property(property: 'slug', type: 'string'),
+                                    new OA\Property(property: 'description', type: 'string', nullable: true),
+                                    new OA\Property(property: 'isActive', type: 'boolean'),
+                                    new OA\Property(property: 'sectionId', type: 'integer', nullable: true),
+                                    new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                                    new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                                    new OA\Property(property: 'productsCount', type: 'integer'),
+                                ],
+                                type: 'object'
+                            )
+                        ),
+                        new OA\Property(property: 'total', type: 'integer'),
+                        new OA\Property(property: 'page', type: 'integer'),
+                        new OA\Property(property: 'limit', type: 'integer'),
+                        new OA\Property(property: 'pages', type: 'integer'),
+                    ],
+                    type: 'object'
                 )
             )
         ]
@@ -58,24 +88,45 @@ class CategoryController extends AbstractController
         CategoryRepository $categoryRepository,
         Request $request,
     ): JsonResponse {
+        $page  = max(1, (int) $request->query->get('page', 1));
+        $limit = max(1, min(100, (int) $request->query->get('limit', 20)));
+        $q     = trim((string) $request->query->get('q', ''));
         $sectionId = $request->query->get('sectionId');
 
+        $qb = $categoryRepository->createQueryBuilder('c')
+            ->leftJoin('c.section', 's')
+            ->addSelect('s');
+
         if ($sectionId !== null) {
-            $categories = $categoryRepository->createQueryBuilder('c')
-                ->andWhere('c.section = :sectionId')
-                ->setParameter('sectionId', (int) $sectionId)
-                ->getQuery()
-                ->getResult();
-        } else {
-            $categories = $categoryRepository->findAll();
+            $qb
+                ->andWhere('s.id = :sectionId')
+                ->setParameter('sectionId', (int) $sectionId);
         }
 
-        $data = array_map(
+        if ($q !== '') {
+            $qb
+                ->andWhere('LOWER(c.title) LIKE :q OR LOWER(c.slug) LIKE :q')
+                ->setParameter('q', '%' . mb_strtolower($q) . '%');
+        }
+
+        $qb->orderBy('c.id', 'ASC');
+
+        $pager = new Pagerfanta(new QueryAdapter($qb));
+        $pager->setMaxPerPage($limit);
+        $pager->setCurrentPage($page);
+
+        $items = array_map(
             fn (Category $category) => $this->serializeCategory($category),
-            $categories
+            iterator_to_array($pager->getCurrentPageResults())
         );
 
-        return $this->json($data);
+        return $this->json([
+            'items' => $items,
+            'total' => $pager->getNbResults(),
+            'page'  => $page,
+            'limit' => $limit,
+            'pages' => $pager->getNbPages(),
+        ]);
     }
 
     #[Route('/{id}', name: 'show', methods: ['GET'])]
@@ -208,6 +259,11 @@ class CategoryController extends AbstractController
         if (array_key_exists('description', $payload)) {
             $category->setDescription($payload['description']);
         }
+        if (isset($payload['isActive'])) {
+            $category->setIsActive((bool) $payload['isActive']);
+        } else {
+            $category->setIsActive(true);
+        }
 
         $em->persist($category);
         $em->flush();
@@ -307,6 +363,10 @@ class CategoryController extends AbstractController
                 return $this->json(['error' => 'Section not found'], 404);
             }
             $category->setSection($section);
+        }
+
+        if (isset($payload['isActive'])) {
+            $category->setIsActive((bool) $payload['isActive']);
         }
 
         if ($titleChanged && $category->getTitle() !== null) {

@@ -6,6 +6,8 @@ use App\Entity\Section;
 use App\Repository\SectionRepository;
 use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
+use Pagerfanta\Doctrine\ORM\QueryAdapter;
+use Pagerfanta\Pagerfanta;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
@@ -19,41 +21,93 @@ class SectionController extends AbstractController
 {
     #[Route('', name: 'index', methods: ['GET'])]
     #[OA\Get(
-        description: 'Returns all sections.',
+        description: 'Returns all sections with pagination & search.',
         summary: 'List all sections',
+        parameters: [
+            new OA\QueryParameter(
+                name: 'page',
+                description: 'Page number (1-based)',
+                required: false,
+                schema: new OA\Schema(type: 'integer', default: 1)
+            ),
+            new OA\QueryParameter(
+                name: 'limit',
+                description: 'Items per page',
+                required: false,
+                schema: new OA\Schema(type: 'integer', default: 20)
+            ),
+            new OA\QueryParameter(
+                name: 'q',
+                description: 'Search query (by title or slug)',
+                required: false,
+                schema: new OA\Schema(type: 'string')
+            ),
+        ],
         responses: [
             new OA\Response(
                 response: 200,
-                description: 'List of sections',
+                description: 'Paginated list of sections',
                 content: new OA\JsonContent(
-                    type: 'array',
-                    items: new OA\Items(
-                        properties: [
-                            new OA\Property(property: 'id', type: 'integer'),
-                            new OA\Property(property: 'title', type: 'string'),
-                            new OA\Property(property: 'slug', type: 'string'),
-                            new OA\Property(property: 'description', type: 'string', nullable: true),
-                            new OA\Property(property: 'isActive', type: 'boolean'),
-                            new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
-                            new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
-                            new OA\Property(property: 'categoriesCount', type: 'integer'),
-                        ],
-                        type: 'object'
-                    )
+                    properties: [
+                        new OA\Property(
+                            property: 'items',
+                            type: 'array',
+                            items: new OA\Items(
+                                properties: [
+                                    new OA\Property(property: 'id', type: 'integer'),
+                                    new OA\Property(property: 'title', type: 'string'),
+                                    new OA\Property(property: 'slug', type: 'string'),
+                                    new OA\Property(property: 'description', type: 'string', nullable: true),
+                                    new OA\Property(property: 'isActive', type: 'boolean'),
+                                    new OA\Property(property: 'createdAt', type: 'string', format: 'date-time', nullable: true),
+                                    new OA\Property(property: 'updatedAt', type: 'string', format: 'date-time', nullable: true),
+                                    new OA\Property(property: 'categoriesCount', type: 'integer'),
+                                ],
+                                type: 'object'
+                            )
+                        ),
+                        new OA\Property(property: 'total', type: 'integer'),
+                        new OA\Property(property: 'page', type: 'integer'),
+                        new OA\Property(property: 'limit', type: 'integer'),
+                        new OA\Property(property: 'pages', type: 'integer'),
+                    ],
+                    type: 'object'
                 )
             )
         ]
     )]
-    public function index(SectionRepository $sectionRepository): JsonResponse
+    public function index(SectionRepository $sectionRepository, Request $request): JsonResponse
     {
-        $sections = $sectionRepository->findAll();
+        $page  = max(1, (int) $request->query->get('page', 1));
+        $limit = max(1, min(100, (int) $request->query->get('limit', 20)));
+        $q     = trim((string) $request->query->get('q', ''));
 
-        $data = array_map(
+        $qb = $sectionRepository->createQueryBuilder('s');
+
+        if ($q !== '') {
+            $qb
+                ->andWhere('LOWER(s.title) LIKE :q OR LOWER(s.slug) LIKE :q')
+                ->setParameter('q', '%' . mb_strtolower($q) . '%');
+        }
+
+        $qb->orderBy('s.id', 'ASC');
+
+        $pager = new Pagerfanta(new QueryAdapter($qb));
+        $pager->setMaxPerPage($limit);
+        $pager->setCurrentPage($page);
+
+        $items = array_map(
             fn (Section $section) => $this->serializeSection($section),
-            $sections
+            iterator_to_array($pager->getCurrentPageResults())
         );
 
-        return $this->json($data);
+        return $this->json([
+            'items' => $items,
+            'total' => $pager->getNbResults(),
+            'page'  => $page,
+            'limit' => $limit,
+            'pages' => $pager->getNbPages(),
+        ]);
     }
 
     #[Route('/{id}', name: 'show', methods: ['GET'])]
