@@ -46,7 +46,7 @@ class Product
     #[ORM\Column(type: 'string', enumType: ProductStatus::class)]
     private ProductStatus $status = ProductStatus::ACTIVE;
 
-    #[ORM\Column(nullable: true)]
+    #[ORM\Column(type: Types::JSON, nullable: true)]
     private ?array $images = null;
 
     public function getId(): ?int

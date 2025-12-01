@@ -90,8 +90,12 @@ class ProductController extends AbstractController
                                     new OA\Property(property: 'isActive', type: 'boolean'),
                                     new OA\Property(
                                         property: 'images',
+                                        description: 'Array of data URLs (data:image/*;base64,...)',
                                         type: 'array',
-                                        items: new OA\Items(type: 'string'),
+                                        items: new OA\Items(
+                                            type: 'string',
+                                            example: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'
+                                        ),
                                         nullable: true
                                     ),
                                     new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
@@ -201,8 +205,12 @@ class ProductController extends AbstractController
                         new OA\Property(property: 'isActive', type: 'boolean'),
                         new OA\Property(
                             property: 'images',
+                            description: 'Array of data URLs (data:image/*;base64,...)',
                             type: 'array',
-                            items: new OA\Items(type: 'string'),
+                            items: new OA\Items(
+                                type: 'string',
+                                example: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'
+                            ),
                             nullable: true
                         ),
                         new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
@@ -249,8 +257,12 @@ class ProductController extends AbstractController
                     ),
                     new OA\Property(
                         property: 'images',
+                        description: 'Array of data URLs (data:image/*;base64,...)',
                         type: 'array',
-                        items: new OA\Items(type: 'string'),
+                        items: new OA\Items(
+                            type: 'string',
+                            example: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'
+                        ),
                         nullable: true
                     ),
                 ]
@@ -272,8 +284,12 @@ class ProductController extends AbstractController
                         new OA\Property(property: 'isActive', type: 'boolean'),
                         new OA\Property(
                             property: 'images',
+                            description: 'Array of data URLs (data:image/*;base64,...)',
                             type: 'array',
-                            items: new OA\Items(type: 'string'),
+                            items: new OA\Items(
+                                type: 'string',
+                                example: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'
+                            ),
                             nullable: true
                         ),
                         new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
@@ -327,19 +343,23 @@ class ProductController extends AbstractController
 
         $product = new Product();
         $product->setTitle($payload['title']);
-        $product->setPrice($payload['price']);
+        $product->setPrice((string)$payload['price']);
         $product->setDescription($payload['description'] ?? null);
         $product->setDiscountPrice($payload['discountPrice'] ?? null);
         $product->setCategory($category);
 
-        $slug = (string)$slugger->slug($payload['title'])->lower();
+        $slug = (string) $slugger->slug($payload['title'])->lower();
         $product->setSlug($slug);
 
         if (isset($payload['status'])) {
             $product->setStatus(ProductStatus::from($payload['status']));
         }
-        if (isset($payload['images'])) {
-            $product->setImages($payload['images']);
+        if (array_key_exists('images', $payload)) {
+            try {
+                $product->setImages($this->normalizeImages($payload['images']));
+            } catch (\InvalidArgumentException $e) {
+                return $this->json(['error' => $e->getMessage()], 400);
+            }
         }
         if (isset($payload['isActive'])) {
             $product->setIsActive((bool) $payload['isActive']);
@@ -373,8 +393,12 @@ class ProductController extends AbstractController
                     ),
                     new OA\Property(
                         property: 'images',
+                        description: 'Array of data URLs (data:image/*;base64,...)',
                         type: 'array',
-                        items: new OA\Items(type: 'string'),
+                        items: new OA\Items(
+                            type: 'string',
+                            example: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'
+                        ),
                         nullable: true
                     ),
                 ]
@@ -404,8 +428,12 @@ class ProductController extends AbstractController
                         new OA\Property(property: 'isActive', type: 'boolean'),
                         new OA\Property(
                             property: 'images',
+                            description: 'Array of data URLs (data:image/*;base64,...)',
                             type: 'array',
-                            items: new OA\Items(type: 'string'),
+                            items: new OA\Items(
+                                type: 'string',
+                                example: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...'
+                            ),
                             nullable: true
                         ),
                         new OA\Property(property: 'categoryId', type: 'integer', nullable: true),
@@ -481,8 +509,12 @@ class ProductController extends AbstractController
         if (isset($payload['status'])) {
             $product->setStatus(ProductStatus::from($payload['status']));
         }
-        if (isset($payload['images'])) {
-            $product->setImages($payload['images']);
+        if (array_key_exists('images', $payload)) {
+            try {
+                $product->setImages($this->normalizeImages($payload['images']));
+            } catch (\InvalidArgumentException $e) {
+                return $this->json(['error' => $e->getMessage()], 400);
+            }
         }
         if ($titleChanged) {
             $product->setSlug((string)$slugger->slug($product->getTitle())->lower());
@@ -549,5 +581,33 @@ class ProductController extends AbstractController
             'createdAt'     => $product->getCreatedAt()?->format(DATE_ATOM),
             'updatedAt'     => $product->getUpdatedAt()?->format(DATE_ATOM),
         ];
+    }
+
+    /**
+     * @param mixed $images
+     * @return array<string>|null
+     */
+    private function normalizeImages(mixed $images): ?array
+    {
+        if ($images === null) {
+            return null;
+        }
+        if (!is_array($images)) {
+            throw new \InvalidArgumentException('images must be an array of strings.');
+        }
+
+        $normalized = [];
+        foreach ($images as $img) {
+            if (!is_string($img)) {
+                throw new \InvalidArgumentException('Each image must be a string.');
+            }
+            if (!str_starts_with($img, 'data:image/')) {
+                throw new \InvalidArgumentException(
+                    'Each image must be a data:image/*;base64,... string.'
+                );
+            }
+            $normalized[] = $img;
+            }
+        return $normalized;
     }
 }
