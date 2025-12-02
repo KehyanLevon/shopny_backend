@@ -96,10 +96,10 @@ class AuthController extends AbstractController
         }
 
         $dto = new RegisterRequest();
-        $dto->email   = isset($data['email']) ? trim((string) $data['email']) : null;
-        $dto->password = isset($data['password']) ? (string) $data['password'] : null;
-        $dto->name    = isset($data['name']) ? trim((string) $data['name']) : null;
-        $dto->surname = isset($data['surname']) ? trim((string) $data['surname']) : null;
+        $dto->setEmail($data['email'] ?? null);
+        $dto->setPassword($data['password'] ?? null);
+        $dto->setName($data['name'] ?? null);
+        $dto->setSurname($data['surname'] ?? null);
 
         $violations = $validator->validate($dto);
 
@@ -109,8 +109,7 @@ class AuthController extends AbstractController
                 'errors'  => $this->formatValidationErrors($violations),
             ], 422);
         }
-
-        if ($userRepo->findOneBy(['email' => $dto->email])) {
+        if ($userRepo->findOneBy(['email' => $dto->getEmail()])) {
             return $this->json([
                 'message' => 'Validation failed.',
                 'errors'  => [
@@ -120,10 +119,10 @@ class AuthController extends AbstractController
         }
 
         $user = new User();
-        $user->setEmail($dto->email);
-        $user->setName($dto->name);
-        $user->setSurname($dto->surname);
-        $hashedPassword = $passwordHasher->hashPassword($user, $dto->password);
+        $user->setEmail($dto->getEmail());
+        $user->setName($dto->getName());
+        $user->setSurname($dto->getSurname());
+        $hashedPassword = $passwordHasher->hashPassword($user, $dto->getPassword());
         $user->setPassword($hashedPassword);
         $user->setVerifiedAt(null);
         $user->setRoles(['ROLE_USER']);
