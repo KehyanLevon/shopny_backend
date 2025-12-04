@@ -1,10 +1,10 @@
 <?php
 
-namespace App\Dto\Section;
+namespace App\Dto\Category;
 
 use Symfony\Component\Validator\Constraints as Assert;
 
-class SectionCreateRequest
+class CategoryRequest
 {
     #[Assert\NotBlank(message: 'Title is required.')]
     #[Assert\Length(
@@ -20,6 +20,10 @@ class SectionCreateRequest
         maxMessage: 'Description must not be longer than {{ limit }} characters.'
     )]
     private ?string $description = null;
+
+    #[Assert\NotNull(message: 'sectionId is required.')]
+    #[Assert\Positive(message: 'sectionId must be a positive integer.')]
+    private ?int $sectionId = null;
 
     #[Assert\Choice(
         choices: [true, false],
@@ -45,6 +49,25 @@ class SectionCreateRequest
     public function setDescription(?string $description): void
     {
         $this->description = $description !== null ? trim($description) : null;
+    }
+
+    public function getSectionId(): ?int
+    {
+        return $this->sectionId;
+    }
+
+    public function setSectionId(mixed $sectionId): void
+    {
+        if ($sectionId === null || $sectionId === '') {
+            $this->sectionId = null;
+            return;
+        }
+
+        if (is_numeric($sectionId)) {
+            $this->sectionId = (int) $sectionId;
+        } else {
+            $this->sectionId = 0;
+        }
     }
 
     public function getIsActive(): ?bool

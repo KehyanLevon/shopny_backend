@@ -8,4 +8,10 @@ enum PromoScopeType: string
     case SECTION = 'section';
     case CATEGORY = 'category';
     case PRODUCT = 'product';
+    public const VALUES = [
+        'all',
+        'section',
+        'category',
+        'product'
+    ];
 }

@@ -2,8 +2,7 @@
 
 namespace App\Controller;
 
-use App\Dto\Category\CategoryCreateRequest;
-use App\Dto\Category\CategoryUpdateRequest;
+use App\Dto\Category\CategoryRequest;
 use App\Entity\Category;
 use App\Repository\CategoryRepository;
 use App\Repository\SectionRepository;
@@ -254,8 +253,9 @@ class CategoryController extends AbstractController
             return $this->json(['message' => 'Invalid JSON'], 400);
         }
 
-        $dto = new CategoryCreateRequest();
+        $dto = new CategoryRequest();
         $dto->setTitle($payload['title'] ?? null);
+        $dto->setDescription($payload['description'] ?? null);
         $dto->setSectionId($payload['sectionId'] ?? null);
         $dto->setIsActive($payload['isActive'] ?? null);
 
@@ -274,6 +274,7 @@ class CategoryController extends AbstractController
 
         $category = new Category();
         $category->setTitle($dto->getTitle());
+        $category->setDescription($dto->getDescription());
         $category->setSection($section);
         $category->setIsActive($dto->getIsActive());
 
@@ -362,61 +363,78 @@ class CategoryController extends AbstractController
         Request $request,
         EntityManagerInterface $em,
         SectionRepository $sectionRepository,
-        SluggerInterface $slugger
+        SluggerInterface $slugger,
+        ValidatorInterface $validator,
     ): JsonResponse {
         $payload = json_decode($request->getContent(), true);
 
         if (!is_array($payload)) {
-            return $this->json(['error' => 'Invalid JSON'], 400);
+            return $this->json(['message' => 'Invalid JSON'], 400);
         }
 
+        $dto = new CategoryRequest();
+
+        if (\array_key_exists('title', $payload)) {
+            $dto->setTitle($payload['title']);
+        }
+        if (\array_key_exists('description', $payload)) {
+            $dto->setDescription($payload['description']);
+        }
+        if (\array_key_exists('sectionId', $payload)) {
+            $dto->setSectionId($payload['sectionId']);
+        }
+        if (\array_key_exists('isActive', $payload)) {
+            $dto->setIsActive($payload['isActive']);
+        }
+        $violations = $validator->validate($dto);
+        if (\count($violations) > 0) {
+            return $this->json([
+                'message' => 'Validation failed.',
+                'errors'  => $this->formatValidationErrors($violations),
+            ], 422);
+        }
         $titleChanged = false;
 
-        if (array_key_exists('title', $payload)) {
-            $title = $payload['title'];
-
-            if ($title !== null) {
-                $title = trim((string) $title);
-                if ($title === '') {
-                    return $this->json([
-                        'error' => 'Title must not be empty when provided.',
-                    ], 400);
-                }
-            }
-
-            $category->setTitle($title);
+        if (\array_key_exists('title', $payload) && $dto->getTitle() !== null) {
+            $category->setTitle($dto->getTitle());
             $titleChanged = true;
         }
-
-        if (array_key_exists('description', $payload)) {
-            $description = $payload['description'];
-            $category->setDescription($description !== null ? trim((string) $description) : null);
+        if (\array_key_exists('description', $payload)) {
+            $category->setDescription($dto->getDescription());
         }
+        if (\array_key_exists('sectionId', $payload)) {
+            $rawSectionId = $payload['sectionId'] ?? null;
 
-        if (array_key_exists('sectionId', $payload)) {
-            $sectionId = $payload['sectionId'];
-
-            if ($sectionId === null) {
+            if ($rawSectionId === null || $rawSectionId === '') {
                 $category->setSection(null);
             } else {
-                $section = $sectionRepository->find((int) $sectionId);
+                $sectionId = $dto->getSectionId();
+                if ($sectionId === null) {
+                    return $this->json([
+                        'message' => 'Invalid sectionId value.',
+                    ], 422);
+                }
+                $section = $sectionRepository->find($sectionId);
                 if (!$section) {
-                    return $this->json(['error' => 'Section not found'], 404);
+                    return $this->json(['message' => 'Section not found'], 404);
                 }
                 $category->setSection($section);
             }
         }
-
-        if ($titleChanged && $category->getId() !== null && $category->getTitle() !== null) {
+        if (\array_key_exists('isActive', $payload)) {
+            $category->setIsActive($dto->getIsActive() ?? false);
+        }
+        if (
+            $titleChanged
+            && $category->getId() !== null
+            && $category->getTitle() !== null
+        ) {
             $slug = (string) $slugger
                 ->slug($category->getTitle() . '-' . $category->getId())
                 ->lower();
-
             $category->setSlug($slug);
         }
-
         $category->setUpdatedAt(new \DateTimeImmutable());
-
         $em->flush();
 
         return $this->json($this->serializeCategory($category));

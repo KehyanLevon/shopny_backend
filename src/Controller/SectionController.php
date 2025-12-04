@@ -14,8 +14,7 @@ use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
 use Symfony\Component\String\Slugger\SluggerInterface;
-use App\Dto\Section\SectionCreateRequest;
-use App\Dto\Section\SectionUpdateRequest;
+use App\Dto\Section\SectionRequest;
 use Symfony\Component\Validator\Validator\ValidatorInterface;
 use Symfony\Component\Validator\ConstraintViolationListInterface;
 
@@ -226,7 +225,7 @@ class SectionController extends AbstractController
             ], 400);
         }
 
-        $dto = new SectionCreateRequest();
+        $dto = new SectionRequest();
         $dto->setTitle($data['title'] ?? null);
         $dto->setDescription($data['description'] ?? null);
 
@@ -334,7 +333,7 @@ class SectionController extends AbstractController
             return $this->json(['error' => 'Invalid JSON'], 400);
         }
 
-        $dto = new SectionUpdateRequest();
+        $dto = new SectionRequest();
         $dto->setTitle($data['title'] ?? null);
         $dto->setDescription($data['description'] ?? null);
         $dto->setIsActive(

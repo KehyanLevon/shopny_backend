@@ -20,6 +20,9 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 use Symfony\Component\Security\Http\Attribute\IsGranted;
+use App\Dto\PromoCode\PromoCodeRequest;
+use Symfony\Component\Validator\Validator\ValidatorInterface;
+use Symfony\Component\Validator\ConstraintViolationListInterface;
 
 #[Route('/api/promocodes', name: 'api_promocodes_')]
 class PromoCodeController extends AbstractController
@@ -348,64 +351,12 @@ class PromoCodeController extends AbstractController
         responses: [
             new OA\Response(
                 response: 201,
-                description: 'Created promo code',
-                content: new OA\JsonContent(
-                    ref: null,
-                    properties: [
-                        new OA\Property(property: 'id', type: 'integer'),
-                        new OA\Property(property: 'code', type: 'string'),
-                        new OA\Property(property: 'description', type: 'string', nullable: true),
-                        new OA\Property(
-                            property: 'scopeType',
-                            type: 'string',
-                            enum: ['all', 'section', 'category', 'product']
-                        ),
-                        new OA\Property(property: 'discountPercent', type: 'string'),
-                        new OA\Property(property: 'isActive', type: 'boolean'),
-                        new OA\Property(
-                            property: 'startsAt',
-                            type: 'string',
-                            format: 'date-time',
-                            nullable: true
-                        ),
-                        new OA\Property(
-                            property: 'expiresAt',
-                            type: 'string',
-                            format: 'date-time',
-                            nullable: true
-                        ),
-                        new OA\Property(
-                            property: 'section',
-                            properties: [
-                                new OA\Property(property: 'id', type: 'integer'),
-                                new OA\Property(property: 'title', type: 'string'),
-                            ],
-                            type: 'object',
-                            nullable: true
-                        ),
-                        new OA\Property(
-                            property: 'category',
-                            properties: [
-                                new OA\Property(property: 'id', type: 'integer'),
-                                new OA\Property(property: 'title', type: 'string'),
-                            ],
-                            type: 'object',
-                            nullable: true
-                        ),
-                        new OA\Property(
-                            property: 'product',
-                            properties: [
-                                new OA\Property(property: 'id', type: 'integer'),
-                                new OA\Property(property: 'title', type: 'string'),
-                            ],
-                            type: 'object',
-                            nullable: true
-                        ),
-                    ],
-                    type: 'object'
-                )
+                description: 'Created promo code'
             ),
-            new OA\Response(response: 400, description: 'Validation error')
+            new OA\Response(
+                response: 422,
+                description: 'Validation failed'
+            )
         ]
     )]
     public function create(
@@ -413,64 +364,105 @@ class PromoCodeController extends AbstractController
         EntityManagerInterface $em,
         SectionRepository $sectionRepo,
         CategoryRepository $categoryRepo,
-        ProductRepository $productRepo
+        ProductRepository $productRepo,
+        ValidatorInterface $validator,
+        PromoCodeRepository $promoRepo
     ): JsonResponse {
         $payload = json_decode($request->getContent(), true);
 
         if (!is_array($payload)) {
-            return $this->json(['error' => 'Invalid JSON'], 400);
+            return $this->json(['message' => 'Invalid JSON body.'], 400);
         }
 
-        $required = ['code', 'discountPercent', 'scopeType'];
-        foreach ($required as $field) {
-            if (empty($payload[$field]) && $payload[$field] !== '0') {
-                return $this->json(['error' => sprintf('%s is required', $field)], 400);
+        $dto = new PromoCodeRequest();
+        $dto->setCode($payload['code'] ?? null);
+        $dto->setDescription($payload['description'] ?? null);
+        $dto->setScopeType($payload['scopeType'] ?? null);
+        $dto->setDiscountPercent($payload['discountPercent'] ?? null);
+        $dto->setIsActive($payload['isActive'] ?? null);
+        $dto->setStartsAt($payload['startsAt'] ?? null);
+        $dto->setExpiresAt($payload['expiresAt'] ?? null);
+        $dto->setSectionId(isset($payload['sectionId']) ? (int) $payload['sectionId'] : null);
+        $dto->setCategoryId(isset($payload['categoryId']) ? (int) $payload['categoryId'] : null);
+        $dto->setProductId(isset($payload['productId']) ? (int) $payload['productId'] : null);
+
+        $violations = $validator->validate($dto);
+        if (count($violations) > 0) {
+            return $this->json([
+                'message' => 'Validation failed.',
+                'errors'  => $this->formatValidationErrors($violations),
+            ], 422);
+        }
+
+        // --- проверка уникальности code (case-insensitive) ---
+        $code = trim((string) $dto->getCode());
+        if ($code !== '') {
+            $existing = $promoRepo->createQueryBuilder('p')
+                ->andWhere('LOWER(p.code) = :code')
+                ->setParameter('code', mb_strtolower($code))
+                ->setMaxResults(1)
+                ->getQuery()
+                ->getOneOrNullResult();
+
+            if ($existing instanceof PromoCode) {
+                return $this->json([
+                    'message' => 'Validation failed.',
+                    'errors'  => [
+                        'code' => ['Promo code with this code already exists.'],
+                    ],
+                ], 422);
             }
         }
+        // ----------------------------------------------------
 
-        $scopeType = $this->parseScopeType($payload['scopeType']);
+        $scopeType = $this->parseScopeType($dto->getScopeType());
         if ($scopeType === null) {
-            return $this->json(['error' => 'Invalid scopeType'], 400);
+            return $this->json([
+                'message' => 'Validation failed.',
+                'errors'  => ['scopeType' => ['Invalid scopeType.']],
+            ], 422);
         }
 
         $promo = new PromoCode();
-        $promo->setCode(trim($payload['code']));
-        $promo->setDescription($payload['description'] ?? null);
+        $promo->setCode($code); // уже нормализованный
+        $promo->setDescription($dto->getDescription());
         $promo->setScopeType($scopeType);
 
-        $discountPercent = (float) $payload['discountPercent'];
-        if ($discountPercent < 0 || $discountPercent > 100) {
-            return $this->json(['error' => 'discountPercent must be between 0 and 100'], 400);
-        }
+        $discountPercent = (float) $dto->getDiscountPercent();
         $promo->setDiscountPercent(number_format($discountPercent, 2, '.', ''));
 
-        $this->applyScopeRelations(
-            $promo,
-            $scopeType,
-            $payload,
-            $sectionRepo,
-            $categoryRepo,
-            $productRepo
-        );
+        $scopePayload = [
+            'sectionId'  => $dto->getSectionId(),
+            'categoryId' => $dto->getCategoryId(),
+            'productId'  => $dto->getProductId(),
+        ];
 
-        if (isset($payload['isActive'])) {
-            $promo->setIsActive((bool) $payload['isActive']);
+        try {
+            $this->applyScopeRelations(
+                $promo,
+                $scopeType,
+                $scopePayload,
+                $sectionRepo,
+                $categoryRepo,
+                $productRepo
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->json([
+                'message' => 'Validation failed.',
+                'errors'  => ['scope' => [$e->getMessage()]],
+            ], 422);
         }
 
-        if (!empty($payload['startsAt'])) {
-            try {
-                $promo->setStartsAt(new \DateTimeImmutable($payload['startsAt']));
-            } catch (\Exception) {
-                return $this->json(['error' => 'Invalid startsAt datetime'], 400);
-            }
+        if ($dto->getIsActive() !== null) {
+            $promo->setIsActive($dto->getIsActive());
         }
 
-        if (!empty($payload['expiresAt'])) {
-            try {
-                $promo->setExpiresAt(new \DateTimeImmutable($payload['expiresAt']));
-            } catch (\Exception) {
-                return $this->json(['error' => 'Invalid expiresAt datetime'], 400);
-            }
+        if ($dto->getStartsAt() !== null) {
+            $promo->setStartsAt(new \DateTimeImmutable($dto->getStartsAt()));
+        }
+
+        if ($dto->getExpiresAt() !== null) {
+            $promo->setExpiresAt(new \DateTimeImmutable($dto->getExpiresAt()));
         }
 
         $em->persist($promo);
@@ -600,92 +592,179 @@ class PromoCodeController extends AbstractController
         EntityManagerInterface $em,
         SectionRepository $sectionRepo,
         CategoryRepository $categoryRepo,
-        ProductRepository $productRepo
+        ProductRepository $productRepo,
+        ValidatorInterface $validator,
+        PromoCodeRepository $promoRepo
     ): JsonResponse {
         $payload = json_decode($request->getContent(), true);
         if (!is_array($payload)) {
-            return $this->json(['error' => 'Invalid JSON'], 400);
+            return $this->json(['message' => 'Invalid JSON body.'], 400);
         }
 
-        if (isset($payload['code'])) {
-            $promo->setCode(trim($payload['code']));
-        }
+        $dto = new PromoCodeRequest();
+        $dto->setCode($payload['code'] ?? $promo->getCode());
 
         if (array_key_exists('description', $payload)) {
-            $promo->setDescription($payload['description'] ?? null);
-        }
-
-        if (isset($payload['discountPercent'])) {
-            $discountPercent = (float) $payload['discountPercent'];
-            if ($discountPercent < 0 || $discountPercent > 100) {
-                return $this->json(['error' => 'discountPercent must be between 0 and 100'], 400);
-            }
-            $promo->setDiscountPercent(number_format($discountPercent, 2, '.', ''));
-        }
-
-        if (isset($payload['scopeType'])) {
-            $scopeType = $this->parseScopeType($payload['scopeType']);
-            if ($scopeType === null) {
-                return $this->json(['error' => 'Invalid scopeType'], 400);
-            }
-            $promo->setScopeType($scopeType);
-
-            $promo->setSection(null);
-            $promo->setCategory(null);
-            $promo->setProduct(null);
-
-            $this->applyScopeRelations(
-                $promo,
-                $scopeType,
-                $payload,
-                $sectionRepo,
-                $categoryRepo,
-                $productRepo
-            );
+            $dto->setDescription($payload['description']);
         } else {
-            $this->applyScopeRelations(
-                $promo,
-                $promo->getScopeType(),
-                $payload,
-                $sectionRepo,
-                $categoryRepo,
-                $productRepo
-            );
+            $dto->setDescription($promo->getDescription());
         }
 
-        if (isset($payload['isActive'])) {
-            $promo->setIsActive((bool) $payload['isActive']);
+        $scopeTypeString = $payload['scopeType'] ?? $promo->getScopeType()->value;
+        $dto->setScopeType($scopeTypeString);
+
+        if (array_key_exists('discountPercent', $payload)) {
+            $dto->setDiscountPercent($payload['discountPercent']);
+        } else {
+            $dto->setDiscountPercent($promo->getDiscountPercent());
+        }
+
+        if (array_key_exists('isActive', $payload)) {
+            $dto->setIsActive($payload['isActive']);
+        } else {
+            $dto->setIsActive($promo->isActive());
         }
 
         if (array_key_exists('startsAt', $payload)) {
             if ($payload['startsAt'] === null || $payload['startsAt'] === '') {
-                $promo->setStartsAt(null);
+                $dto->setStartsAt(null);
             } else {
-                try {
-                    $promo->setStartsAt(new \DateTimeImmutable($payload['startsAt']));
-                } catch (\Exception) {
-                    return $this->json(['error' => 'Invalid startsAt datetime'], 400);
-                }
+                $dto->setStartsAt($payload['startsAt']);
             }
+        } else {
+            $dto->setStartsAt(
+                $promo->getStartsAt()?->format(\DateTimeInterface::ATOM)
+            );
         }
 
         if (array_key_exists('expiresAt', $payload)) {
             if ($payload['expiresAt'] === null || $payload['expiresAt'] === '') {
-                $promo->setExpiresAt(null);
+                $dto->setExpiresAt(null);
             } else {
-                try {
-                    $promo->setExpiresAt(new \DateTimeImmutable($payload['expiresAt']));
-                } catch (\Exception) {
-                    return $this->json(['error' => 'Invalid expiresAt datetime'], 400);
-                }
+                $dto->setExpiresAt($payload['expiresAt']);
             }
+        } else {
+            $dto->setExpiresAt(
+                $promo->getExpiresAt()?->format(\DateTimeInterface::ATOM)
+            );
         }
 
+        if (array_key_exists('sectionId', $payload)) {
+            $dto->setSectionId(
+                $payload['sectionId'] !== null ? (int) $payload['sectionId'] : null
+            );
+        } else {
+            $dto->setSectionId($promo->getSection()?->getId());
+        }
+
+        if (array_key_exists('categoryId', $payload)) {
+            $dto->setCategoryId(
+                $payload['categoryId'] !== null ? (int) $payload['categoryId'] : null
+            );
+        } else {
+            $dto->setCategoryId($promo->getCategory()?->getId());
+        }
+
+        if (array_key_exists('productId', $payload)) {
+            $dto->setProductId(
+                $payload['productId'] !== null ? (int) $payload['productId'] : null
+            );
+        } else {
+            $dto->setProductId($promo->getProduct()?->getId());
+        }
+
+        $violations = $validator->validate($dto);
+        if (count($violations) > 0) {
+            return $this->json([
+                'message' => 'Validation failed.',
+                'errors'  => $this->formatValidationErrors($violations),
+            ], 422);
+        }
+        $code = trim((string) $dto->getCode());
+        if ($code !== '') {
+            $existing = $promoRepo->createQueryBuilder('p')
+                ->andWhere('LOWER(p.code) = :code')
+                ->setParameter('code', mb_strtolower($code))
+                ->andWhere('p.id != :id')
+                ->setParameter('id', $promo->getId())
+                ->setMaxResults(1)
+                ->getQuery()
+                ->getOneOrNullResult();
+
+            if ($existing instanceof PromoCode) {
+                return $this->json([
+                    'message' => 'Validation failed.',
+                    'errors'  => [
+                        'code' => ['Promo code with this code already exists.'],
+                    ],
+                ], 422);
+            }
+        }
+        if (isset($payload['code'])) {
+            $promo->setCode($code);
+        }
+        if (array_key_exists('description', $payload)) {
+            $promo->setDescription($payload['description'] ?? null);
+        }
+        $newScopeType = $this->parseScopeType($dto->getScopeType());
+        if ($newScopeType === null) {
+            return $this->json([
+                'message' => 'Validation failed.',
+                'errors'  => ['scopeType' => ['Invalid scopeType.']],
+            ], 422);
+        }
+        if (isset($payload['scopeType'])) {
+            $promo->setScopeType($newScopeType);
+            $promo->setSection(null);
+            $promo->setCategory(null);
+            $promo->setProduct(null);
+        }
+        $scopePayload = [
+            'sectionId'  => $dto->getSectionId(),
+            'categoryId' => $dto->getCategoryId(),
+            'productId'  => $dto->getProductId(),
+        ];
+        try {
+            $this->applyScopeRelations(
+                $promo,
+                $promo->getScopeType(),
+                $scopePayload,
+                $sectionRepo,
+                $categoryRepo,
+                $productRepo
+            );
+        } catch (\InvalidArgumentException $e) {
+            return $this->json([
+                'message' => 'Validation failed.',
+                'errors'  => ['scope' => [$e->getMessage()]],
+            ], 422);
+        }
+        if (isset($payload['discountPercent'])) {
+            $discountPercent = (float) $dto->getDiscountPercent();
+            $promo->setDiscountPercent(number_format($discountPercent, 2, '.', ''));
+        }
+        if (isset($payload['isActive'])) {
+            $promo->setIsActive((bool) $payload['isActive']);
+        }
+        if (array_key_exists('startsAt', $payload)) {
+            if ($dto->getStartsAt() === null) {
+                $promo->setStartsAt(null);
+            } else {
+                $promo->setStartsAt(new \DateTimeImmutable($dto->getStartsAt()));
+            }
+        }
+        if (array_key_exists('expiresAt', $payload)) {
+            if ($dto->getExpiresAt() === null) {
+                $promo->setExpiresAt(null);
+            } else {
+                $promo->setExpiresAt(new \DateTimeImmutable($dto->getExpiresAt()));
+            }
+        }
         $promo->setUpdatedAt(new \DateTimeImmutable());
         $em->flush();
-
         return $this->json($this->serializePromo($promo));
     }
+
 
     #[Route('/{id}', name: 'delete', methods: ['DELETE'])]
     #[IsGranted('ROLE_ADMIN')]
@@ -907,5 +986,16 @@ class PromoCodeController extends AbstractController
                 ]
                 : null,
         ];
+    }
+
+    private function formatValidationErrors(ConstraintViolationListInterface $violations): array
+    {
+        $errors = [];
+        foreach ($violations as $violation) {
+            $field = $violation->getPropertyPath() ?: 'global';
+            $errors[$field][] = $violation->getMessage();
+        }
+
+        return $errors;
     }
 }

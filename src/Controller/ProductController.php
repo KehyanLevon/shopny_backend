@@ -2,8 +2,7 @@
 
 namespace App\Controller;
 
-use App\Dto\Product\ProductCreateRequest;
-use App\Dto\Product\ProductUpdateRequest;
+use App\Dto\Product\ProductRequest;
 use App\Entity\Product;
 use App\Enum\ProductStatus;
 use App\Repository\CategoryRepository;
@@ -289,7 +288,7 @@ class ProductController extends AbstractController
             return $this->json(['message' => 'Invalid JSON'], 400);
         }
 
-        $dto = new ProductCreateRequest();
+        $dto = new ProductRequest();
         $dto->setTitle($payload['title'] ?? null);
         $dto->setDescription($payload['description'] ?? null);
         $dto->setPrice($payload['price'] ?? null);
@@ -323,11 +322,42 @@ class ProductController extends AbstractController
         $errors = [];
         $imagesPaths = null;
         if (array_key_exists('images', $payload)) {
-            $imagesPaths = $this->processImagesPayload(
-                $payload['images'],
-                $kernel->getProjectDir(),
-                $errors
-            );
+            $imagesPayload = $payload['images'];
+            if ($imagesPayload === null) {
+                $imagesPaths = null;
+            } elseif (!is_array($imagesPayload)) {
+                $errors['images'][] = 'images must be an array of strings.';
+            } else {
+                $dataUrls   = [];
+                $plainPaths = [];
+                foreach ($imagesPayload as $index => $img) {
+                    if (!is_string($img)) {
+                        $errors["images[$index]"][] = 'Each image must be a string.';
+                        continue;
+                    }
+                    if (preg_match('#^data:image/([a-zA-Z0-9.+-]+);base64,#', $img)) {
+                        $dataUrls[] = $img;
+                    } else {
+                        $plainPaths[] = $img;
+                    }
+                }
+                if (!empty($dataUrls)) {
+                    $newPaths = $this->processImagesPayload(
+                        $dataUrls,
+                        $kernel->getProjectDir(),
+                        $errors
+                    );
+                    if (!empty($errors)) {
+                        return $this->json([
+                            'message' => 'Validation failed.',
+                            'errors'  => $errors,
+                        ], 422);
+                    }
+                    $imagesPaths = array_merge($plainPaths, $newPaths ?? []);
+                } else {
+                    $imagesPaths = $plainPaths;
+                }
+            }
         }
 
         if (!empty($errors)) {
@@ -336,6 +366,7 @@ class ProductController extends AbstractController
                 'errors'  => $errors,
             ], 422);
         }
+
 
         $category = $categoryRepo->find($dto->getCategoryId());
         if (!$category) {
@@ -385,7 +416,6 @@ class ProductController extends AbstractController
         return $this->json($this->serializeProduct($product), 201);
     }
 
-
     #[Route('/{id}', name: 'update', methods: ['PUT', 'PATCH'])]
     #[IsGranted('ROLE_ADMIN')]
     #[OA\Patch(
@@ -408,7 +438,7 @@ class ProductController extends AbstractController
                     ),
                     new OA\Property(
                         property: 'images',
-                        description: 'Array of data URLs (data:image/*;base64,...) — will be saved to /uploads/products and stored as paths. If omitted, images are unchanged.',
+                        description: 'Array of data URLs (data:image/*;base64,...) or existing paths (/uploads/products/...). If omitted, images are unchanged.',
                         type: 'array',
                         items: new OA\Items(type: 'string'),
                         nullable: true
@@ -447,7 +477,7 @@ class ProductController extends AbstractController
             return $this->json(['message' => 'Invalid JSON'], 400);
         }
 
-        $dto = new ProductUpdateRequest();
+        $dto = new ProductRequest();
         $dto->setTitle($payload['title'] ?? null);
         $dto->setDescription($payload['description'] ?? null);
         $dto->setPrice($payload['price'] ?? null);
@@ -479,14 +509,62 @@ class ProductController extends AbstractController
             }
         }
 
-        $errors = [];
+        $errors      = [];
         $imagesPaths = null;
+
         if (array_key_exists('images', $payload)) {
-            $imagesPaths = $this->processImagesPayload(
-                $payload['images'],
-                $kernel->getProjectDir(),
-                $errors
-            );
+            $imagesPayload = $payload['images'];
+
+            if ($imagesPayload === null) {
+                $imagesPaths = null;
+            } elseif (!is_array($imagesPayload)) {
+                $errors['images'][] = 'images must be an array of strings.';
+            } else {
+                $dataUrls   = [];
+                $plainPaths = [];
+
+                foreach ($imagesPayload as $index => $img) {
+                    if (!is_string($img)) {
+                        $errors["images[$index]"][] = 'Each image must be a string.';
+                        continue;
+                    }
+
+                    if (preg_match('#^data:image/([a-zA-Z0-9.+-]+);base64,#', $img)) {
+                        $dataUrls[] = $img;
+                    } else {
+                        $plainPaths[] = $img;
+                    }
+                }
+
+                if (!empty($errors)) {
+                    return $this->json([
+                        'message' => 'Validation failed.',
+                        'errors'  => $errors,
+                    ], 422);
+                }
+
+                if (!empty($dataUrls)) {
+                    // декодируем только base64-картинки
+                    $processErrors = [];
+                    $newPaths      = $this->processImagesPayload(
+                        $dataUrls,
+                        $kernel->getProjectDir(),
+                        $processErrors
+                    );
+
+                    if (!empty($processErrors)) {
+                        return $this->json([
+                            'message' => 'Validation failed.',
+                            'errors'  => $processErrors,
+                        ], 422);
+                    }
+
+                    $imagesPaths = array_merge($plainPaths, $newPaths ?? []);
+                } else {
+                    // только старые пути, просто сохраняем как есть
+                    $imagesPaths = $plainPaths;
+                }
+            }
         }
 
         if (!empty($errors)) {
@@ -496,15 +574,19 @@ class ProductController extends AbstractController
             ], 422);
         }
 
+        // ---------- ПРИМЕНЕНИЕ ИЗМЕНЕНИЙ К СУЩНОСТИ ----------
+
         $titleChanged = false;
 
         if ($dto->getTitle() !== null) {
             $product->setTitle($dto->getTitle());
             $titleChanged = true;
         }
+
         if ($dto->getDescription() !== null) {
             $product->setDescription($dto->getDescription());
         }
+
         if ($dto->getPrice() !== null) {
             $product->setPrice($dto->getPrice());
         }
@@ -538,7 +620,7 @@ class ProductController extends AbstractController
             $product->setIsActive($dto->getIsActive());
         }
 
-        if (array_key_exists('images', $payload)) {
+            if (array_key_exists('images', $payload)) {
             $product->setImages($imagesPaths);
         }
 
@@ -554,6 +636,7 @@ class ProductController extends AbstractController
 
         return $this->json($this->serializeProduct($product));
     }
+
 
     #[Route('/{id}', name: 'delete', methods: ['DELETE'])]
     #[IsGranted('ROLE_ADMIN')]

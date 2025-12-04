@@ -4,8 +4,9 @@ namespace App\Dto\Section;
 
 use Symfony\Component\Validator\Constraints as Assert;
 
-class SectionUpdateRequest
+class SectionRequest
 {
+    #[Assert\NotBlank(message: 'Title is required.')]
     #[Assert\Length(
         min: 2,
         max: 255,

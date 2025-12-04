@@ -5,7 +5,7 @@ namespace App\Dto\Product;
 use App\Enum\ProductStatus;
 use Symfony\Component\Validator\Constraints as Assert;
 
-class ProductCreateRequest
+class ProductRequest
 {
     #[Assert\NotBlank(message: 'Title is required.')]
     #[Assert\Length(
