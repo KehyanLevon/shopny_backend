@@ -19,7 +19,7 @@ class PromoCodeRepository extends ServiceEntityRepository
         ?string $search,
         ?string $scopeType,
         ?bool $isActive,
-        ?int $isExpiredFlag, // 1 = только истёкшие, 0 = только не истёкшие
+        ?int $isExpiredFlag,
         string $sortBy,
         string $sortDir
     ): QueryBuilder {

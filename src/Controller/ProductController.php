@@ -64,7 +64,7 @@ class ProductController extends AbstractController
                 name: 'q',
                 description: 'Search query (by title or description)',
                 required: false,
-                schema: new OA\Schema(type: 'string')
+                schema: new OA\Schema(type: 'string', maxLength: 255)
             ),
             new OA\QueryParameter(
                 name: 'sortBy',
@@ -134,7 +134,10 @@ class ProductController extends AbstractController
 
         $categoryId = $request->query->get('categoryId');
         $sectionId  = $request->query->get('sectionId');
-        $q          = trim((string) $request->query->get('q', ''));
+        $q = trim((string) $request->query->get('q', ''));
+        if ($q !== '') {
+            $q = mb_substr($q, 0, 255);
+        }
 
         $sortBy  = (string) $request->query->get('sortBy', 'createdAt');
         $sortDir = strtolower((string) $request->query->get('sortDir', 'desc')) === 'asc' ? 'ASC' : 'DESC';

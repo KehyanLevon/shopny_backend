@@ -47,7 +47,7 @@ class PromoCodeController extends AbstractController
                 name: 'search',
                 description: 'Search by code or description',
                 in: 'query',
-                schema: new OA\Schema(type: 'string')
+                schema: new OA\Schema(type: 'string', maxLength: 255)
             ),
             new OA\Parameter(
                 name: 'scopeType',
@@ -114,6 +114,12 @@ class PromoCodeController extends AbstractController
                                         nullable: true
                                     ),
                                     new OA\Property(
+                                        property: 'createdAt',
+                                        type: 'string',
+                                        format: 'date-time',
+                                        nullable: true
+                                    ),
+                                    new OA\Property(
                                         property: 'section',
                                         properties: [
                                             new OA\Property(property: 'id', type: 'integer'),
@@ -158,9 +164,11 @@ class PromoCodeController extends AbstractController
         $page  = max(1, (int) $request->query->get('page', 1));
         $limit = max(1, min(100, (int) $request->query->get('limit', 20)));
 
-        $search    = trim((string) $request->query->get('search', ''));
+        $search = trim((string) $request->query->get('search', ''));
+        if ($search !== '') {
+            $search = mb_substr($search, 0, 255);
+        }
         $scopeType = $request->query->get('scopeType');
-
         $isActive = null;
         if ($request->query->has('isActive')) {
             $raw = $request->query->get('isActive');
@@ -962,6 +970,7 @@ class PromoCodeController extends AbstractController
             'isActive'        => $promo->isActive(),
             'startsAt'        => $promo->getStartsAt()?->format(\DateTimeInterface::ATOM),
             'expiresAt'       => $promo->getExpiresAt()?->format(\DateTimeInterface::ATOM),
+            'createdAt'       => $promo->getCreatedAt()?->format(\DateTimeInterface::ATOM),
             'section'         => $section
                 ? [
                     'id'    => $section->getId(),

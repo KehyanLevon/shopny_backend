@@ -49,7 +49,7 @@ class SectionController extends AbstractController
                 name: 'q',
                 description: 'Search query (by title or slug)',
                 required: false,
-                schema: new OA\Schema(type: 'string')
+                schema: new OA\Schema(type: 'string', maxLength: 255)
             ),
         ],
         responses: [
@@ -90,7 +90,9 @@ class SectionController extends AbstractController
         $page  = max(1, (int) $request->query->get('page', 1));
         $limit = max(1, min(100, (int) $request->query->get('limit', 20)));
         $q     = trim((string) $request->query->get('q', ''));
-
+        if ($q !== '') {
+            $q = mb_substr($q, 0, 255);
+        }
         $isActive = null;
         if ($request->query->has('isActive')) {
             $isActive = filter_var(

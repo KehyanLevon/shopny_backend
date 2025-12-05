@@ -4,7 +4,6 @@ namespace App\Controller;
 
 use App\Entity\User;
 use App\Repository\UserRepository;
-use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
 use Pagerfanta\Doctrine\ORM\QueryAdapter;
 use Pagerfanta\Pagerfanta;
@@ -40,7 +39,7 @@ class UserController extends AbstractController
                 description: 'Search by name, surname or email',
                 in: 'query',
                 required: false,
-                schema: new OA\Schema(type: 'string')
+                schema: new OA\Schema(type: 'string', maxLength: 255)
             ),
             new OA\Parameter(
                 name: 'isVerified',
@@ -98,6 +97,12 @@ class UserController extends AbstractController
                                         format: 'date-time',
                                         nullable: true
                                     ),
+                                    new OA\Property(
+                                        property: 'createdAt',
+                                        type: 'string',
+                                        format: 'date-time',
+                                        nullable: true
+                                    ),
                                 ],
                                 type: 'object'
                             )
@@ -116,15 +121,26 @@ class UserController extends AbstractController
         $limit = max(1, min(100, (int) $request->query->get('limit', 20)));
 
         $search = trim((string) $request->query->get('search', ''));
+        if ($search !== '') {
+            $search = mb_substr($search, 0, 255);
+        }
 
         $isVerified = null;
         if ($request->query->has('isVerified')) {
-            $isVerified = filter_var($request->query->get('isVerified'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            $isVerified = filter_var(
+                $request->query->get('isVerified'),
+                FILTER_VALIDATE_BOOLEAN,
+                FILTER_NULL_ON_FAILURE
+            );
         }
 
         $role = $request->query->get('role');
 
         $sortBy  = (string) $request->query->get('sortBy', 'createdAt');
+        $allowed = ['createdAt', 'verifiedAt'];
+        if (!in_array($sortBy, $allowed, true)) {
+            $sortBy = 'createdAt';
+        }
         $sortDir = strtolower((string) $request->query->get('sortDir', 'desc')) === 'asc' ? 'ASC' : 'DESC';
 
         $qb = $repo->createFilteredQuery($search, $isVerified, $role, $sortBy, $sortDir);
@@ -164,6 +180,7 @@ class UserController extends AbstractController
             'roles'      => $user->getRoles(),
             'isVerified' => $user->isVerified(),
             'verifiedAt' => $user->getVerifiedAt()?->format(\DateTimeInterface::ATOM),
+            'createdAt'  => $user->getCreatedAt()?->format(DATE_ATOM),
         ];
     }
 }
